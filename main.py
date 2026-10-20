@@ -273,15 +273,17 @@ class App:
         for k, v in values.items():
             self.config.set(k, v)
         autostart_mod.sync(bool(values.get("autostart", False)), exe_path())
-        # 热键
+        # 热键；返回 False 表示这个组合没注册上（被系统或其他程序占了）
+        ok = True
         spec = values.get("hotkey", "")
         if values.get("hotkey_enabled") and spec:
             mods, vk = parse(spec)
             if mods and vk:
-                self.hotkey.rebind(spec)
+                ok = bool(self.hotkey.rebind(spec))
         else:
             self.hotkey.stop()
         self.panel.update()
+        return ok
 
     # ---------- 插件 ----------
     def load_plugins(self):

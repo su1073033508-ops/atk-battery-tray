@@ -8,7 +8,7 @@ APP_DIR_NAME = "设备电量"
 DEFAULTS = {
     "swap_on": False,
     "hotkey_enabled": True,
-    "hotkey": "ctrl+alt+w",
+    "hotkey": "ctrl+alt+d",
     "autostart": False,
     "refresh_seconds": 60,
     "hover_delay": 0.35,

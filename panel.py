@@ -3,11 +3,12 @@ import ctypes
 import ctypes.wintypes
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import messagebox
 
 from PIL import ImageTk
 
 import render
-from hotkey import format_spec, parse
+from hotkey import MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, format_spec, parse
 
 BG = "#141619"
 CARD = "#202329"
@@ -23,6 +24,35 @@ user32.GetAncestor.restype = ctypes.c_void_p
 gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
 gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
 user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
+
+
+def _mods_now(state=0):
+    """当前按住的修饰键，返回 hotkey 里的 MOD_* 位。
+
+    Windows 下 Tk 的 event.state 里 Alt 是 0x20000（不是 Mod1），而且不带 Win 键，
+    所以再问一遍 GetAsyncKeyState，多键组合和 Alt/Win 才录得准。
+    """
+    mods = 0
+    if state & 0x4:
+        mods |= MOD_CONTROL
+    if state & 0x1:
+        mods |= MOD_SHIFT
+    if state & 0x8:
+        mods |= MOD_ALT
+    if state & 0x20000:
+        mods |= MOD_ALT
+    try:
+        if user32.GetAsyncKeyState(0x11) & 0x8000:
+            mods |= MOD_CONTROL
+        if user32.GetAsyncKeyState(0x12) & 0x8000:
+            mods |= MOD_ALT
+        if user32.GetAsyncKeyState(0x10) & 0x8000:
+            mods |= MOD_SHIFT
+        if (user32.GetAsyncKeyState(0x5B) | user32.GetAsyncKeyState(0x5C)) & 0x8000:
+            mods |= MOD_WIN
+    except Exception:
+        pass
+    return mods
 
 
 def _pick_font(root):
@@ -434,6 +464,16 @@ class Settings:
         if self.win:
             self.win.focus_force()
 
+        def hint():
+            # 按键被别的程序全局热键吃掉时，这里一直收不到事件，提示一下
+            if self._recording and not self._pending:
+                self.hk_var.set("没反应？可能这个组合被别的程序占了")
+
+        try:
+            self.root.after(3500, hint)
+        except Exception:
+            pass
+
     def _stop_record(self):
         self._recording = False
         if self.win and self.win.winfo_exists():
@@ -446,43 +486,47 @@ class Settings:
     def _on_keypress(self, evt):
         if not self._recording:
             return
-        mods = 0
-        state = evt.state
-        if state & 0x4:
-            mods |= 0x0002
-        if state & 0x8:
-            mods |= 0x0001
-        if state & 0x1:
-            mods |= 0x0004
+        mods = _mods_now(evt.state)
         vk = evt.keycode
-        if vk in (0x11, 0x12, 0x10, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C):
+        # 只按了修饰键本身：继续等真正的按键（允许 Ctrl+Alt+Shift+W 这种多键组合）
+        if vk in (0x11, 0x12, 0x10, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x5D, 0x5E):
+            self.hk_var.set("再按一个普通键…")
             return
         if mods == 0:
-            self.hk_var.set("至少要带 Ctrl/Alt/Shift")
+            self.hk_var.set("至少要带 Ctrl/Alt/Shift/Win")
             return
         spec = self._to_spec(mods, vk)
         if not spec:
+            self.hk_var.set("这个键不支持，换个键试试")
             return
         self._pending_spec = spec
         self._pending = format_spec(mods, vk)
         self._stop_record()
 
+    OEM_KEYS = {0xC0: "`", 0xBD: "-", 0xBB: "=", 0xDB: "[", 0xDD: "]", 0xDC: "\\",
+                0xBA: ";", 0xDE: "'", 0xBC: ",", 0xBE: ".", 0xBF: "/"}
+
     def _to_spec(self, mods, vk):
         parts = []
-        if mods & 0x0002:
+        if mods & MOD_CONTROL:
             parts.append("ctrl")
-        if mods & 0x0001:
+        if mods & MOD_ALT:
             parts.append("alt")
-        if mods & 0x0004:
+        if mods & MOD_SHIFT:
             parts.append("shift")
-        if 0x30 <= vk <= 0x5A:
+        if mods & MOD_WIN:
+            parts.append("win")
+        if (0x30 <= vk <= 0x39) or (0x41 <= vk <= 0x5A):
             parts.append(chr(vk).lower())
         elif 0x70 <= vk <= 0x87:
             parts.append(f"f{vk - 0x70 + 1}")
+        elif vk in self.OEM_KEYS:
+            parts.append(self.OEM_KEYS[vk])
         else:
             for name, code in {"backspace": 0x08, "tab": 0x09, "enter": 0x0D, "space": 0x20,
                                "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
-                               "insert": 0x2D, "delete": 0x2E, "home": 0x24, "end": 0x23}.items():
+                               "insert": 0x2D, "delete": 0x2E, "home": 0x24, "end": 0x23,
+                               "pageup": 0x21, "pagedown": 0x22}.items():
                 if code == vk:
                     parts.append(name)
                     break
@@ -499,13 +543,19 @@ class Settings:
         spec = self._pending_spec
         if spec is None:
             spec = "" if self.hk_var.get() == "未设置" else self.app.config.get("hotkey", "")
-        self.app.apply_settings({
+        ok = self.app.apply_settings({
             "hotkey": spec or "",
             "hotkey_enabled": bool(self.hk_on.get()),
             "autostart": bool(self.auto_var.get()),
             "refresh_seconds": max(15, int(self.refresh_var.get() or 60)),
             "hover_delay": min(3.0, max(0.0, float(self.hover_var.get() or 0.35))),
         })
+        if ok is False and self.win and self.win.winfo_exists():
+            messagebox.showwarning(
+                "热键没生效",
+                f"「{self._current_text()}」这个组合被系统或别的程序占用了，\n换一个组合再试（比如 Ctrl+Alt+W）。",
+                parent=self.win)
+            return
         self.close()
 
     def close(self):

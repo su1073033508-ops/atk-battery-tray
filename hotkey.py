@@ -82,22 +82,26 @@ class Hotkey:
         self._registered = False
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._ready = threading.Event()
 
     def start(self, spec=None):
         if spec is not None:
             self.spec = spec
         mods, vk = parse(self.spec)
-        if mods is None or vk is None:
+        if not mods or vk is None:        # 必须带修饰键，否则会变成「按 W 就触发」
             return False
         self._stop_event.clear()
+        self._ready.clear()
         self._thread = threading.Thread(target=self._loop, args=(mods, vk), name="hotkey", daemon=True)
         self._thread.start()
-        return True
+        self._ready.wait(0.8)             # 等注册结果，好把「注册失败」告诉用户
+        return self._registered
 
     def _loop(self, mods, vk):
         self._tid = threading.get_ident()
         ok = user32.RegisterHotKey(None, 1, mods, vk)
         self._registered = bool(ok)
+        self._ready.set()
         if __import__("os").environ.get("EZB_DEBUG") == "1":
             import sys
             print(f"[hotkey-loop] register ok={bool(ok)} err={ctypes.get_last_error()}", file=sys.stderr, flush=True)
@@ -124,7 +128,8 @@ class Hotkey:
         self.stop()
         self.spec = spec
         if spec:
-            self.start(spec)
+            return self.start(spec)
+        return True
 
     def stop(self):
         self._stop_event.set()
