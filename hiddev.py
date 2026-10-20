@@ -244,7 +244,8 @@ def _read_with_timeout(reader, dev, timeout=2.0):
     t.start()
     t.join(timeout)
     if t.is_alive():
-        return {"state": "error", "level": None}
+        # 设备睡着时读会一直不返回 —— 当作休眠处理，界面显示"休眠"而不是"读取失败"
+        return {"state": "sleep", "level": None}
     return box.get("r") or {"state": "error", "level": None}
 
 
@@ -261,6 +262,7 @@ def read_all(devices):
             "level": info["level"],
         })
     return result
+
 
 
 

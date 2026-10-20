@@ -297,6 +297,15 @@ class Settings:
                    font=self._f(10), bg=CARD_HI, fg=TXT, bd=0, justify="center",
                    buttonbackground=CARD_HI).pack(side="right", ipady=3)
 
+        r3 = tk.Frame(wrap, bg=BG)
+        r3.pack(fill="x", pady=(12, 0))
+        tk.Label(r3, text="悬停多久显示提示（秒）", font=self._f(10), bg=BG, fg=TXT,
+                 anchor="w").pack(side="left")
+        self.hover_var = tk.StringVar(value=str(self.app.config.get("hover_delay", 0.35)))
+        tk.Spinbox(r3, from_=0, to=3, increment=0.1, width=6, textvariable=self.hover_var,
+                   font=self._f(10), bg=CARD_HI, fg=TXT, bd=0, justify="center",
+                   buttonbackground=CARD_HI).pack(side="right", ipady=3)
+
         btn_row = tk.Frame(wrap, bg=BG)
         btn_row.pack(fill="x", pady=(18, 0))
         tk.Button(btn_row, text="保存", font=self._f(10), bg=ACC, fg="white", bd=0,
@@ -404,6 +413,7 @@ class Settings:
             "hotkey_enabled": bool(self.hk_on.get()),
             "autostart": bool(self.auto_var.get()),
             "refresh_seconds": max(15, int(self.refresh_var.get() or 60)),
+            "hover_delay": min(3.0, max(0.0, float(self.hover_var.get() or 0.35))),
         })
         self.close()
 
@@ -484,6 +494,7 @@ def cursor_pos():
         return pt.x, pt.y
     except Exception:
         return 0, 0
+
 
 
 

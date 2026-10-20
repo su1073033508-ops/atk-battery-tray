@@ -11,6 +11,7 @@ DEFAULTS = {
     "hotkey": "ctrl+alt+w",
     "autostart": False,
     "refresh_seconds": 60,
+    "hover_delay": 0.35,
     "devices": [
         {"key": "keyboard", "label": "ATK Z87 键盘", "vid": "373B", "pid": "1012"},
         {"key": "mouse", "label": "VXE R1 Pro Max 鼠标", "vid": "3554", "pid": "F58A"},
@@ -72,4 +73,5 @@ def program_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
+
 

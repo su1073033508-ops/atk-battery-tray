@@ -192,6 +192,7 @@ class App:
     def _hover_loop(self):
         """监听鼠标是否停在托盘图标上，控制自绘提示。"""
         inside = False
+        show_at = None
         while not self._stop.is_set():
             rect = self.tray.icon_rect()
             if os.environ.get('EZB_DEBUG') == '1' and int(time.time()) % 5 == 0:
@@ -202,14 +203,25 @@ class App:
                 px, py = pt.x, pt.y
             except Exception:
                 px, py = 0, 0
+            if os.environ.get('EZB_DUMP_RECT') == '1' and rect:
+                try:
+                    with open(os.path.join(os.environ.get('TEMP','.'), 'ezb_rect.txt'), 'w') as fh:
+                        fh.write(','.join(str(v) for v in rect))
+                except Exception:
+                    pass
             now = bool(rect) and rect[0] <= px <= rect[2] and rect[1] <= py <= rect[3]
-            if now != inside:
-                inside = now
-                if now:
-                    self.post(self.tooltip.show)
-                else:
+            if now and not inside:
+                # 刚进入：开始计时，停留够久才显示
+                show_at = time.time() + max(0.0, float(self.config.get("hover_delay", 0.35)))
+            elif not now and inside:
+                show_at = None
+                if self.tooltip.is_visible():
                     self.post(self.tooltip.hide)
-            self._stop.wait(0.12)
+            inside = now
+            if inside and show_at is not None and not self.tooltip.is_visible() and time.time() >= show_at:
+                show_at = None
+                self.post(self.tooltip.show)
+            self._stop.wait(0.08)
     def _refresh_loop(self):
         while not self._stop.is_set():
             self.refresh_battery()
@@ -346,6 +358,8 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
 
 
 
