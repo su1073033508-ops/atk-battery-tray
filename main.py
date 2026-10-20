@@ -89,7 +89,7 @@ class App:
         self._battery = [{"key": d.get("key"), "label": d.get("label", ""), "state": "unknown", "level": None}
                          for d in self.devices]
         self._battery_lock = threading.Lock()
-        self._last_level = {}
+        self._last_level = dict(self.config.get("last_levels") or {})
         self._refreshing = threading.Event()
         self._stop = threading.Event()
 
@@ -111,7 +111,8 @@ class App:
         self.tray = Tray(icon_path=icon_path(),
                          on_left=lambda: self.post(self.open_panel),
                          on_right=lambda: self.post(self.open_panel),
-                         tip=APP_NAME)
+                         tip=APP_NAME,
+                         pin=bool(self.config.get("pin_tray", True)))
 
         self.plugins = PluginContext(self)
         self._loaded_plugins = []
@@ -149,13 +150,18 @@ class App:
         def work():
             try:
                 result = hiddev.read_all(self.devices)
+                changed = False
                 for dev in result:
                     if dev["state"] == "ok" and dev["level"] is not None:
-                        self._last_level[dev["key"]] = dev["level"]
+                        if self._last_level.get(dev["key"]) != dev["level"]:
+                            self._last_level[dev["key"]] = dev["level"]
+                            changed = True
                     else:
                         prev = self._last_level.get(dev["key"])
                         if prev is not None:
                             dev["last"] = prev
+                if changed:
+                    self._save_last_levels()
                 with self._battery_lock:
                     self._battery = result
                 self.post(self._on_battery_updated)
@@ -166,6 +172,14 @@ class App:
             work()
         else:
             threading.Thread(target=work, name="battery", daemon=True).start()
+
+    def _save_last_levels(self):
+        """上次读到的电量存进配置，重启后休眠设备也能显示数字。"""
+        try:
+            if self.config.get("last_levels") != self._last_level:
+                self.config.set("last_levels", dict(self._last_level))
+        except Exception:
+            pass
 
     def _on_battery_updated(self):
         if os.environ.get("EZB_DEBUG") == "1":
@@ -194,7 +208,7 @@ class App:
         inside = False
         show_at = None
         while not self._stop.is_set():
-            rect = self.tray.icon_rect()
+            rect = self.tray.hover_rect()
             if os.environ.get('EZB_DEBUG') == '1' and int(time.time()) % 5 == 0:
                 print(f'[hover] icon rect={rect}', file=sys.stderr, flush=True)
             try:

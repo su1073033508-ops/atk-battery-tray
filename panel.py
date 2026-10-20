@@ -51,6 +51,58 @@ def screen_scale():
     except Exception:
         pass
     return max(1.0, s)
+
+
+def work_area():
+    """工作区（屏幕减去任务栏）；取不到返回 None。"""
+    try:
+        r = ctypes.wintypes.RECT()
+        if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):
+            return None
+        return (r.left, r.top, r.right, r.bottom)
+    except Exception:
+        return None
+
+
+def anchor_for_rect(rect, w, h, gap, sw, sh):
+    """按托盘图标矩形算弹框左上角：贴着图标居中，不跟鼠标走（否则每次偏差几像素）。
+
+    任务栏在哪条边，就把框放到那条边的内侧；侧边栏则左右贴靠。
+    任务栏自动隐藏时工作区等于整屏，退回「图标在上半还是下半」判断。
+    """
+    try:
+        l, t, r, b = [int(v) for v in rect]
+    except Exception:
+        return None
+    cx, cy = (l + r) // 2, (t + b) // 2
+    wa = work_area()
+    if wa:
+        wl, wt, wr, wb = wa
+    else:
+        wl, wt, wr, wb = 0, 0, sw, sh
+    if wb < sh - 2:
+        edge = "bottom"
+    elif wt > 2:
+        edge = "top"
+    elif wl > 2:
+        edge = "left"
+    elif wr < sw - 2:
+        edge = "right"
+    else:
+        edge = "bottom" if cy >= sh // 2 else "top"
+    if edge == "bottom":
+        x, y = cx - w // 2, t - h - gap
+    elif edge == "top":
+        x, y = cx - w // 2, b + gap
+    elif edge == "left":
+        x, y = r + gap, cy - h // 2
+    else:
+        x, y = l - w - gap, cy - h // 2
+    x = max(wl + 4, min(x, wr - w - 4))
+    y = max(wt + 4, min(y, wb - h - 4))
+    return x, y
+
+
 def round_region(win, w, h, r):
     try:
         hwnd = user32.GetAncestor(int(win.winfo_id()), 2)
@@ -101,13 +153,22 @@ class Panel:
         self._redraw()
 
         w, h = int(self.DW * self.ds), int(self.DH * self.ds)
-        try:
-            px, py = self.root.winfo_pointerxy()
-        except Exception:
-            px, py = 200, 200
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        x = min(max(px - w + int(70 * self.ds), 6), sw - w - 6)
-        y = max(py - h - int(18 * self.ds), 6)
+        rect = None
+        try:
+            rect = self.app.tray.icon_rect()
+        except Exception:
+            rect = None
+        xy = anchor_for_rect(rect, w, h, int(round(10 * self.ds)), sw, sh) if rect else None
+        if xy:
+            x, y = xy
+        else:
+            try:
+                px, py = self.root.winfo_pointerxy()
+            except Exception:
+                px, py = 200, 200
+            x = min(max(px - w + int(70 * self.ds), 6), sw - w - 6)
+            y = max(py - h - int(18 * self.ds), 6)
         try:
             rect = ctypes.wintypes.RECT()
             user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
@@ -442,6 +503,8 @@ class Tooltip:
         self.photo = None
         self.ds = 1.0
         self._visible = False
+        self._place_key = None
+        self._place_xy = None
 
     def _ensure(self):
         if self.win and self.win.winfo_exists():
@@ -458,16 +521,38 @@ class Tooltip:
         self.lbl.pack()
         self.win = w
 
+    def _pos(self, w, h):
+        """位置固定贴着托盘图标；取不到图标矩形时沿用上次的结果或在鼠标位置兜底。"""
+        rect = None
+        try:
+            rect = self.app.tray.icon_rect()
+        except Exception:
+            rect = None
+        try:
+            sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        except Exception:
+            sw, sh = 1920, 1080
+        if rect:
+            key = (tuple(rect), w, h)
+            if key == self._place_key and self._place_xy:
+                return self._place_xy          # 图标没变 → 一个像素都不动
+            xy = anchor_for_rect(rect, w, h, int(round(8 * self.ds)), sw, sh)
+            if xy:
+                self._place_key, self._place_xy = key, xy
+                return xy
+        if self._place_xy:
+            return self._place_xy
+        px, py = cursor_pos()
+        return (min(max(px - w // 2, 6), sw - w - 6),
+                max(py - h - int(22 * self.ds), 6))
+
     def show(self):
         self._ensure()
         img = render.render_tooltip(self.app.battery_snapshot(), self.TW, self.TH, scale=self.ds)
         self.photo = ImageTk.PhotoImage(img)
         self.lbl.configure(image=self.photo)
         w, h = int(self.TW * self.ds), int(self.TH * self.ds)
-        px, py = cursor_pos()
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        x = min(max(px - w // 2, 6), sw - w - 6)
-        y = max(py - h - int(22 * self.ds), 6)
+        x, y = self._pos(w, h)
         self.win.geometry(f"{w}x{h}+{x}+{y}")
         self.win.deiconify()
         self.win.lift()

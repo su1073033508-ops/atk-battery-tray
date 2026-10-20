@@ -14,8 +14,10 @@ GOOD = (74, 222, 128, 255)
 WARN = (250, 190, 70, 255)
 BAD = (248, 113, 113, 255)
 OFF = (75, 82, 96, 255)
+SLEEP = (118, 126, 140, 255)      # 休眠时的灰色电量条（斜纹）
+DIM_HATCH = (86, 93, 106, 255)    # 休眠且没有上次读数时的整条淡斜纹
 
-STATE_TEXT = {"ok": "", "sleep": "休眠", "absent": "未连接", "error": "读取失败"}
+STATE_TEXT = {"ok": "", "sleep": "", "absent": "未连接", "error": "读取失败"}
 
 FONT_DIR = r"C:\Windows\Fonts"
 _FONT_CANDIDATES = ("msyh.ttc", "msyhbd.ttc", "simhei.ttf")
@@ -31,6 +33,53 @@ def _font(size, bold=False):
             except Exception:
                 continue
     return ImageFont.load_default()
+
+
+def _trailing(state, level, last):
+    """设备名后面的文字：正常显示百分比；休眠显示上次读到的百分比（灰色）+ 斜纹条。"""
+    if state == "ok" and level is not None:
+        color = GOOD if level >= 60 else (WARN if level >= 20 else BAD)
+        return color, f"{level}%"
+    if state == "sleep":
+        return SUB, (f"{last}%" if last is not None else "--")
+    if last is not None:
+        return SUB, f"{last}%（{STATE_TEXT.get(state, '')}）"
+    return SUB, STATE_TEXT.get(state, "--")
+
+
+def _bar_fill(state, level, last):
+    """电量条实心填充百分比（0 = 不填）；休眠那条走斜纹，不用这个。"""
+    if state == "ok" and level:
+        return float(level)
+    return 0.0
+
+
+def _hatch(img, box, radius, color, S, step=3.2, lw=1.2):
+    """在 box 里画一条圆角斜纹带（斜纹留空，露出底下的轨道色）。"""
+    x1, y1, x2, y2 = [int(round(v)) for v in box]
+    w, h = max(2, x2 - x1), max(2, y2 - y1)
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(1, int(round(radius))), fill=255)
+    st = max(3, int(round(step * S)))
+    lwid = max(1, int(round(lw * S)))
+    for k in range(-h, w + h, st):
+        md.line((k, h, k + h, 0), fill=0, width=lwid)
+    img.paste(Image.new("RGBA", (w, h), color), (x1, y1), mask)
+
+
+def _sleep_bar(img, box, radius, last, S):
+    """休眠态电量条：有上次读数 → 灰斜纹只到那个长度；一次都没读到 → 整条淡斜纹。
+
+    这样既不会像「没电了」（空条），又能看出这是旧数据而不是实时电量。
+    """
+    x1, y1, x2, y2 = box
+    if last:
+        end = x1 + (x2 - x1) * max(0.0, min(100.0, float(last))) / 100.0
+        if end - x1 > 2:
+            _hatch(img, (x1, y1, end, y2), radius, SLEEP, S)
+            return
+    _hatch(img, (x1, y1, x2, y2), radius, DIM_HATCH, S, step=4.0, lw=1.1)
 
 
 def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
@@ -72,25 +121,24 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
 
         d.text((sc(P + 26), sc(y + 4)), dev["label"], font=_font(int(sc(13))), fill=TXT)
         last = dev.get("last")
-        if state == "ok" and level is not None:
-            color = GOOD if level >= 60 else (WARN if level >= 20 else BAD)
-            text = f"{level}%"
-        elif last is not None:
-            color = SUB
-            text = f"{last}%（{STATE_TEXT.get(state, "")}）"
-        else:
-            color = SUB
-            text = STATE_TEXT.get(state, "--")
-        fw = d.textlength(text, font=_font(int(sc(13)), bold=True))
-        d.text((sc(width - P) - fw, sc(y + 4)), text, font=_font(int(sc(13)), bold=True), fill=color)
+        color, text = _trailing(state, level, last)
+        if text:
+            fw = d.textlength(text, font=_font(int(sc(13)), bold=True))
+            d.text((sc(width - P) - fw, sc(y + 4)), text,
+                   font=_font(int(sc(13)), bold=True), fill=color)
 
         # 进度条
         bx1, bx2 = P + 2, width - P
         by = y + 30
         d.rounded_rectangle((sc(bx1), sc(by), sc(bx2), sc(by + 6)), radius=sc(3), fill=TRACK)
-        if state == "ok" and level:
-            bw = max(6, (bx2 - bx1) * level / 100.0)
-            d.rounded_rectangle((sc(bx1), sc(by), sc(bx1 + bw), sc(by + 6)), radius=sc(3), fill=color)
+        if state == "sleep":
+            _sleep_bar(img, (sc(bx1), sc(by), sc(bx2), sc(by + 6)), sc(3), last, S)
+        else:
+            fill = _bar_fill(state, level, last)
+            if fill:
+                bw = max(6, (bx2 - bx1) * fill / 100.0)
+                d.rounded_rectangle((sc(bx1), sc(by), sc(bx1 + bw), sc(by + 6)),
+                                    radius=sc(3), fill=color)
         rows.append(dev["key"])
         y += 56
 
@@ -171,26 +219,24 @@ def render_tooltip(devices, width, height, scale=1.0, ss=3):
         d.text((sc(32), sc(y + 1)), dev["label"], font=f_name, fill=TXT)
         name_w = d.textlength(dev["label"], font=f_name)
 
-        if state == "ok" and level is not None:
-            color = GOOD if level >= 60 else (WARN if level >= 20 else BAD)
-            text = f"{level}%"
-        elif dev.get("last") is not None:
-            color = SUB
-            text = f"{dev['last']}%（{STATE_TEXT.get(state, '')}）"
-        else:
-            color = SUB
-            text = STATE_TEXT.get(state, "--")
-
-        # 数字紧跟设备名（留 10px 间距）
-        d.text((sc(32) + name_w + sc(10), sc(y + 1)), text, font=f_pct, fill=color)
+        color, text = _trailing(state, level, dev.get("last"))
+        if text:
+            # 数字紧跟设备名（留 10px 间距）
+            d.text((sc(32) + name_w + sc(10), sc(y + 1)), text, font=f_pct, fill=color)
 
         # 进度条：填充宽度严格按百分比
         bx = 32
         by = y + 23
         d.rounded_rectangle((sc(bx), sc(by), sc(bx + track_w), sc(by + 5)), radius=sc(2.5), fill=TRACK)
-        if state == "ok" and level:
-            fill_w = track_w * level / 100.0
-            d.rounded_rectangle((sc(bx), sc(by), sc(bx + fill_w), sc(by + 5)), radius=sc(2.5), fill=color)
+        if state == "sleep":
+            _sleep_bar(img, (sc(bx), sc(by), sc(bx + track_w), sc(by + 5)), sc(2.5),
+                       dev.get("last"), S)
+        else:
+            fill = _bar_fill(state, level, dev.get("last"))
+            if fill:
+                fill_w = track_w * fill / 100.0
+                d.rounded_rectangle((sc(bx), sc(by), sc(bx + fill_w), sc(by + 5)),
+                                    radius=sc(2.5), fill=color)
         y += 42
 
     out_size = (max(1, int(width * scale)), max(1, int(height * scale)))
