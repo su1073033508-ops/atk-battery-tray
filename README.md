@@ -42,7 +42,7 @@
 
 ### 直接用 exe（推荐）
 
-1. 到 [Releases](../../releases) 下载 `ATK自制驱动.exe`
+1. 到 [Releases](../../releases) 下载 `ATK-Battery-Tray.exe`
 2. 放到一个固定目录（**`plugins` 文件夹要和 exe 同级**）
 3. 双击运行。Win11 首次会把它收进托盘溢出区 `^`，**程序会自动把自己钉回任务栏**；
    想让它老实待在隐藏区，就把 config.json 里的 `pin_tray` 改成 `false`
