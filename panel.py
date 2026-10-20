@@ -117,7 +117,7 @@ def round_region(win, w, h, r):
 class Panel:
     """托盘面板：整块用 PIL 画好再显示，边缘和文字都是抗锯齿的。"""
 
-    DW, DH = 328, 268
+    DW, DH = 328, 264
     PAD = 16
 
     def __init__(self, root, app):
@@ -131,6 +131,8 @@ class Panel:
         self._menu_labels = []
         self._hover = None
         self._toggle_rect = None
+        self._refresh_rect = None
+        self._hover_refresh = False
 
     # ---------- 显示 ----------
     def show(self):
@@ -216,10 +218,9 @@ class Panel:
 
     # ---------- 绘制 ----------
     def _menu_items(self):
-        items = [("设置…", self.app.open_settings), ("刷新电量", self.app.refresh_battery),
-                 ("退出", self.app.quit)]
+        items = [("设置…", self.app.open_settings), ("退出", self.app.quit)]
         for label, cb in getattr(self.app.plugins, "menu_items", []):
-            items.insert(2, (label, cb))
+            items.insert(1, (label, cb))
         return items
 
     def _redraw(self):
@@ -227,15 +228,15 @@ class Panel:
             return
         items = self._menu_items()
         self._menu_labels = [i[0] for i in items]
-        img, rects = render.compose(
+        img, rects, geo = render.compose(
             self.app.battery_snapshot(), self.app.keyswap.enabled, self._hover,
-            self._menu_labels, self.DW, self.DH, scale=self.ds)
+            self._menu_labels, self.DW, self.DH, scale=self.ds,
+            hover_refresh=self._hover_refresh)
         self.photo = ImageTk.PhotoImage(img)
         self.lbl.configure(image=self.photo)
         self._menu_rects = [(r[0], r[1], r[2], r[3]) for r in rects]
-        y = 14 + 56 * len(self.app.battery_snapshot())
-        ty = y + 16
-        self._toggle_rect = (self.PAD - 6, ty - 8, self.DW - self.PAD + 6, ty + 30)
+        self._toggle_rect = geo["toggle"]
+        self._refresh_rect = geo["refresh"]
 
     def update(self):
         self._redraw()
@@ -245,6 +246,10 @@ class Panel:
         return evt.x / self.ds, evt.y / self.ds
 
     def _hit(self, x, y):
+        if self._refresh_rect:
+            x1, y1, x2, y2 = self._refresh_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return "refresh", None
         if self._toggle_rect:
             x1, y1, x2, y2 = self._toggle_rect
             if x1 <= x <= x2 and y1 <= y <= y2:
@@ -254,23 +259,48 @@ class Panel:
                 return "menu", i
         return None, None
 
+    def _pointer_design(self):
+        """鼠标在面板里的设计坐标；窗口没开时返回 (-1, -1)。"""
+        try:
+            px, py = self.win.winfo_pointerxy()
+            return ((px - self.win.winfo_rootx()) / self.ds,
+                    (py - self.win.winfo_rooty()) / self.ds)
+        except Exception:
+            return -1, -1
+
     def _on_motion(self, evt):
         x, y = self._to_design(evt)
         kind, idx = self._hit(x, y)
         label = self._menu_labels[idx] if kind == "menu" else None
-        if label != self._hover:
+        hov_btn = kind == "refresh"
+        if label != self._hover or hov_btn != self._hover_refresh:
             self._hover = label
+            self._hover_refresh = hov_btn
             self._redraw()
 
     def _on_leave(self, _evt):
-        if self._hover is not None:
+        if self._hover is not None or self._hover_refresh:
             self._hover = None
+            self._hover_refresh = False
             self._redraw()
 
     def _on_click(self, evt):
         x, y = self._to_design(evt)
         kind, idx = self._hit(x, y)
-        if kind == "toggle":
+        if kind == "refresh":
+            self.app.refresh_battery()
+            self._hover_refresh = True
+            self._redraw()
+            # 按下去亮一下，之后按鼠标是否还在按钮上恢复
+            def restore():
+                if not (self.win and self.win.winfo_exists()):
+                    return
+                px, py = self._pointer_design()
+                k, _i = self._hit(px, py)
+                self._hover_refresh = (k == "refresh")
+                self._redraw()
+            self.root.after(350, restore)
+        elif kind == "toggle":
             self.app.on_swap_changed(not self.app.keyswap.enabled)
             self._redraw()
         elif kind == "menu":

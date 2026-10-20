@@ -82,7 +82,38 @@ def _sleep_bar(img, box, radius, last, S):
     _hatch(img, (x1, y1, x2, y2), radius, DIM_HATCH, S, step=4.0, lw=1.1)
 
 
-def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
+MDL2_FONT = r"C:\Windows\Fonts\segmdl2.ttf"     # Segoe MDL2 Assets
+GLYPH_REFRESH = "\ue72c"
+
+
+def _draw_refresh(d, sc, width, pad, hovered):
+    """右上角圆形刷新按钮，返回它的设计坐标矩形（用于点击命中）。"""
+    r = 11
+    cx, cy = width - pad - r, 10 + r
+    glyph = TXT if hovered else SUB
+    d.ellipse((sc(cx - r), sc(cy - r), sc(cx + r), sc(cy + r)),
+              fill=CARD_HI if hovered else None,
+              outline=LINE, width=max(1, int(sc(1))))
+    drawn = False
+    try:
+        f = ImageFont.truetype(MDL2_FONT, int(sc(13)))
+        bb = d.textbbox((0, 0), GLYPH_REFRESH, font=f)
+        d.text((sc(cx) - (bb[0] + bb[2]) / 2.0, sc(cy) - (bb[1] + bb[3]) / 2.0),
+               GLYPH_REFRESH, font=f, fill=glyph)
+        drawn = True
+    except Exception:
+        drawn = False
+    if not drawn:                       # 没有 MDL2 字体就手画一个圆弧箭头
+        gr = 5.2
+        d.arc((sc(cx - gr), sc(cy - gr), sc(cx + gr), sc(cy + gr)),
+              start=45, end=315, fill=glyph, width=max(1, int(sc(1.5))))
+        ax, ay = cx + gr * 0.55, cy - gr * 0.80
+        d.polygon([(sc(ax - 3.0), sc(ay - 0.4)), (sc(ax + 2.6), sc(ay - 2.0)),
+                   (sc(ax + 1.0), sc(ay + 3.2))], fill=glyph)
+    return (cx - r, cy - r, cx + r, cy + r)
+
+
+def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3, hover_refresh=False):
     """devices: [{'key','label','state','level'}]；hover: 菜单项文案或 None。"""
     S = scale * ss
     W, H = int(width * S), int(height * S)
@@ -97,7 +128,9 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
                         radius=sc(14), fill=CARD, outline=LINE, width=max(1, int(sc(1))))
 
     P = 16
-    y = 14
+    TOP = 34                     # 顶部留一条给右上角的刷新按钮
+    y = TOP
+    refresh_rect = _draw_refresh(d, sc, width, P, hover_refresh)
     rows = []
     for dev in devices:
         state, level = dev["state"], dev["level"]
@@ -147,7 +180,8 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
 
     # 开关行
     ty = y + 16
-    d.rounded_rectangle((sc(P - 6), sc(ty - 8), sc(width - P + 6), sc(ty + 30)),
+    toggle_rect = (P - 6, ty - 8, width - P + 6, ty + 30)
+    d.rounded_rectangle((sc(toggle_rect[0]), sc(toggle_rect[1]), sc(toggle_rect[2]), sc(toggle_rect[3])),
                         radius=sc(10), fill=CARD_HI)
     d.text((sc(P + 10), sc(ty + 1)), "WASD / 方向键 互换", font=_font(int(sc(13))), fill=TXT)
     px, py = width - P - 50, ty - 2
@@ -159,11 +193,13 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3):
     # 菜单
     my = ty + 42
     d.line((sc(P), sc(my - 10), sc(width - P), sc(my - 10)), fill=LINE, width=max(1, int(sc(1))))
-    return img, my
+    return img, my, {"toggle": toggle_rect, "refresh": refresh_rect}
 
 
-def compose(devices, swap_on, hover_label, menu_labels, width, height, scale=1.0, ss=3):
-    img, my = render_panel(devices, swap_on, hover_label, width, height, scale, ss)
+def compose(devices, swap_on, hover_label, menu_labels, width, height, scale=1.0, ss=3,
+            hover_refresh=False):
+    img, my, geo = render_panel(devices, swap_on, hover_label, width, height, scale, ss,
+                                hover_refresh=hover_refresh)
     d = ImageDraw.Draw(img)
     S = scale * ss
     P = 16
@@ -174,7 +210,7 @@ def compose(devices, swap_on, hover_label, menu_labels, width, height, scale=1.0
         d.text((S * (P + 4), S * (ry + 1)), label, font=_font(int(S * 13)), fill=color)
         items.append((P - 6, ry - 4, width - P + 6, ry + 20))
     out_size = (max(1, int(width * scale)), max(1, int(height * scale)))
-    return img.resize(out_size, Image.LANCZOS), items
+    return img.resize(out_size, Image.LANCZOS), items, geo
 
 
 
