@@ -38,7 +38,8 @@ def _font(size, bold=False):
 def _trailing(state, level, last):
     """设备名后面的文字：正常显示百分比；休眠显示上次读到的百分比（灰色）+ 斜纹条。"""
     if state == "ok" and level is not None:
-        color = GOOD if level >= 60 else (WARN if level >= 20 else BAD)
+        # 用户要求（2026-10-25）：>=80 绿、20..79 黄、<20 红
+        color = GOOD if level >= 80 else (WARN if level >= 20 else BAD)
         return color, f"{level}%"
     if state == "sleep":
         return SUB, (f"{last}%" if last is not None else "--")
