@@ -86,7 +86,8 @@ class App:
     def __init__(self):
         self.config = Config()
         self.devices = self.config.devices()
-        self._battery = [{"key": d.get("key"), "label": d.get("label", ""), "state": "unknown", "level": None}
+        self._battery = [{"key": d.get("key"), "label": d.get("label", ""), "state": "unknown",
+                          "level": None, "charging": False}
                          for d in self.devices]
         self._battery_lock = threading.Lock()
         self._last_level = dict(self.config.get("last_levels") or {})

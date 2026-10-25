@@ -13,10 +13,12 @@ DEFAULTS = {
     "refresh_seconds": 60,
     "hover_delay": 0.35,
     "pin_tray": True,
+    "good_level": 80,          # 电量 >= 该值显示绿色
+    "warn_level": 20,          # 电量 >= 该值显示黄色；低于则红色
     "last_levels": {},
     "devices": [
         {"key": "keyboard", "label": "ATK Z87 键盘", "vid": "373B", "pid": "1012"},
-        {"key": "mouse", "label": "VXE R1 Pro Max 鼠标", "vid": "3554", "pid": "F58A"},
+        {"key": "mouse", "label": "VXE R1 Pro Max 鼠标", "vid": "3554", "pid": "F58A", "wired_pid": "F58C"},
     ],
 }
 

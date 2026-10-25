@@ -35,11 +35,13 @@ def _font(size, bold=False):
     return ImageFont.load_default()
 
 
-def _trailing(state, level, last):
-    """设备名后面的文字：正常显示百分比；休眠显示上次读到的百分比（灰色）+ 斜纹条。"""
+def _trailing(state, level, last, good=80, warn=20):
+    """设备名后面的文字：正常显示百分比；休眠显示上次读到的百分比（灰色）+ 斜纹条。
+
+    good / warn 是颜色阈值（可在设置里改）：level >= good 绿，>= warn 黄，否则红。
+    """
     if state == "ok" and level is not None:
-        # 用户要求（2026-10-25）：>=80 绿、20..79 黄、<20 红
-        color = GOOD if level >= 80 else (WARN if level >= 20 else BAD)
+        color = GOOD if level >= good else (WARN if level >= warn else BAD)
         return color, f"{level}%"
     if state == "sleep":
         return SUB, (f"{last}%" if last is not None else "--")
@@ -87,6 +89,20 @@ MDL2_FONT = r"C:\Windows\Fonts\segmdl2.ttf"     # Segoe MDL2 Assets
 GLYPH_REFRESH = "\ue72c"
 
 
+def _bolt(d, sc, x, y, h, color):
+    """画一个闪电图标（设计坐标：左上角 x,y，高度 h）。用于「正在充电」。"""
+    w = h * 0.62
+    pts = [
+        (x + w * 0.58, y),
+        (x + w * 0.02, y + h * 0.58),
+        (x + w * 0.46, y + h * 0.58),
+        (x + w * 0.30, y + h),
+        (x + w * 0.98, y + h * 0.38),
+        (x + w * 0.54, y + h * 0.38),
+    ]
+    d.polygon([(sc(px), sc(py)) for px, py in pts], fill=color)
+
+
 def _draw_refresh(d, sc, width, pad, hovered):
     """右上角圆形刷新按钮，返回它的设计坐标矩形（用于点击命中）。"""
     r = 11
@@ -114,7 +130,7 @@ def _draw_refresh(d, sc, width, pad, hovered):
     return (cx - r, cy - r, cx + r, cy + r)
 
 
-def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3, hover_refresh=False):
+def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3, hover_refresh=False, good=80, warn=20):
     """devices: [{'key','label','state','level'}]；hover: 菜单项文案或 None。"""
     S = scale * ss
     W, H = int(width * S), int(height * S)
@@ -155,11 +171,14 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3, hover_
 
         d.text((sc(P + 26), sc(y + 4)), dev["label"], font=_font(int(sc(13))), fill=TXT)
         last = dev.get("last")
-        color, text = _trailing(state, level, last)
+        color, text = _trailing(state, level, last, good, warn)
         if text:
             fw = d.textlength(text, font=_font(int(sc(13)), bold=True))
             d.text((sc(width - P) - fw, sc(y + 4)), text,
                    font=_font(int(sc(13)), bold=True), fill=color)
+            if dev.get("charging"):
+                tx = (width - P) - fw / S
+                _bolt(d, sc, tx - 15, y + 3.5, 12.5, color)
 
         # 进度条
         bx1, bx2 = P + 2, width - P
@@ -198,9 +217,9 @@ def render_panel(devices, swap_on, hover, width, height, scale=1.0, ss=3, hover_
 
 
 def compose(devices, swap_on, hover_label, menu_labels, width, height, scale=1.0, ss=3,
-            hover_refresh=False):
+            hover_refresh=False, good=80, warn=20):
     img, my, geo = render_panel(devices, swap_on, hover_label, width, height, scale, ss,
-                                hover_refresh=hover_refresh)
+                                hover_refresh=hover_refresh, good=good, warn=warn)
     d = ImageDraw.Draw(img)
     S = scale * ss
     P = 16
@@ -215,7 +234,7 @@ def compose(devices, swap_on, hover_label, menu_labels, width, height, scale=1.0
 
 
 
-def render_tooltip(devices, width, height, scale=1.0, ss=3):
+def render_tooltip(devices, width, height, scale=1.0, ss=3, good=80, warn=20):
     """悬停提示：两行设备卡片；电量数字紧跟在设备名后面，进度条长度按百分比来。"""
     S = scale * ss
     W, H = int(width * S), int(height * S)
@@ -256,10 +275,14 @@ def render_tooltip(devices, width, height, scale=1.0, ss=3):
         d.text((sc(32), sc(y + 1)), dev["label"], font=f_name, fill=TXT)
         name_w = d.textlength(dev["label"], font=f_name)
 
-        color, text = _trailing(state, level, dev.get("last"))
+        color, text = _trailing(state, level, dev.get("last"), good, warn)
         if text:
             # 数字紧跟设备名（留 10px 间距）
-            d.text((sc(32) + name_w + sc(10), sc(y + 1)), text, font=f_pct, fill=color)
+            tx = 32 + name_w / S + 10
+            d.text((sc(tx), sc(y + 1)), text, font=f_pct, fill=color)
+            if dev.get("charging"):
+                tw = d.textlength(text, font=f_pct) / S
+                _bolt(d, sc, tx + tw + 4, y + 2, 11, color)
 
         # 进度条：填充宽度严格按百分比
         bx = 32

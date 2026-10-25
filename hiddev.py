@@ -191,8 +191,9 @@ def read_keyboard(dev_cfg):
             if resp[7] == 0xFF:
                 return {"state": "sleep", "level": None}
             level = resp[8]
+            charging = bool(resp[9]) if len(resp) > 9 else False
             if 0 <= level <= 100:
-                return {"state": "ok", "level": level}
+                return {"state": "ok", "level": level, "charging": charging}
             return {"state": "error", "level": None}
     return {"state": "absent", "level": None}
 
@@ -202,24 +203,34 @@ def read_mouse(dev_cfg):
 
     注意：请求必须是 [08, 04] + 14×00 + [49]，少这个 0x49 设备会回"未就绪"。
     第一次查询常被当作唤醒，所以要重试。
+
+    有线/无线是**两个不同 PID**：无线接收器 `F58A`，插线后鼠标自身枚举成 `F58C`。
+    所以只按 VID + 用途页匹配（PID 有线无线都收），`charging` 判定：
+      - PID == F58C（插着线）→ 充电中
+      - 或应答第 7 字节非 0（上游资料：非 0 表示有线连接）
     """
+    wireless_pid = dev_cfg.get("pid", "F58A").upper()
+    wired_pid = dev_cfg.get("wired_pid", "F58C").upper()
     payload = [0x08, 0x04] + [0x00] * 14 + [0x49]
     for d in list_hid():
-        if d.usage_page == 0xFF02 and d.vid == dev_cfg["vid"].upper() and d.pid == dev_cfg["pid"].upper():
+        if d.usage_page == 0xFF02 and d.vid == dev_cfg["vid"].upper():
             # 冷启动/刚唤醒时可能返回 0，多点采样后取非 0 的众数
             samples = []
+            wired = d.pid.upper() == wired_pid
             for _ in range(6):
                 resp = query(d.path, payload, d.out_len, d.in_len)
                 if resp and len(resp) > 6 and resp[2] == 0 and 0 <= resp[6] <= 100:
                     samples.append(resp[6])
+                    if len(resp) > 7 and resp[7]:
+                        wired = True
                 time.sleep(0.18)
             nonzero = [v for v in samples if v > 0]
             if nonzero:
                 # 出现最多的那个值
                 best = max(set(nonzero), key=nonzero.count)
-                return {"state": "ok", "level": best}
+                return {"state": "ok", "level": best, "charging": wired}
             if samples:
-                return {"state": "sleep", "level": None}
+                return {"state": "sleep", "level": None, "charging": wired}
             return {"state": "error", "level": None}
     return {"state": "absent", "level": None}
 
@@ -260,6 +271,7 @@ def read_all(devices):
             "label": dev.get("label", dev.get("key", "")),
             "state": info["state"],
             "level": info["level"],
+            "charging": bool(info.get("charging")),
         })
     return result
 

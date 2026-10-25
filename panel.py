@@ -261,7 +261,9 @@ class Panel:
         img, rects, geo = render.compose(
             self.app.battery_snapshot(), self.app.keyswap.enabled, self._hover,
             self._menu_labels, self.DW, self.DH, scale=self.ds,
-            hover_refresh=self._hover_refresh)
+            hover_refresh=self._hover_refresh,
+            good=self.app.config.get("good_level", 80),
+            warn=self.app.config.get("warn_level", 20))
         self.photo = ImageTk.PhotoImage(img)
         self.lbl.configure(image=self.photo)
         self._menu_rects = [(r[0], r[1], r[2], r[3]) for r in rects]
@@ -427,6 +429,63 @@ class Settings:
                    font=self._f(10), bg=CARD_HI, fg=TXT, bd=0, justify="center",
                    buttonbackground=CARD_HI).pack(side="right", ipady=3)
 
+        tk.Frame(wrap, bg=LINE, height=1).pack(fill="x", pady=14)
+        tk.Label(wrap, text="电量颜色区间（只改「起」，终点自动衔接）", font=self._f(10),
+                 bg=BG, fg=SUB, anchor="w").pack(fill="x")
+
+        self.good_var = tk.StringVar(value=str(self.app.config.get("good_level", 80)))
+        self.warn_var = tk.StringVar(value=str(self.app.config.get("warn_level", 20)))
+
+        def _nums():
+            try:
+                good = max(1, min(100, int(self.good_var.get())))
+            except ValueError:
+                good = 80
+            try:
+                warn = max(0, min(99, int(self.warn_var.get())))
+            except ValueError:
+                warn = 20
+            if warn >= good:
+                warn = max(0, good - 1)
+            return good, warn
+
+        def _sync_ranges(*_):
+            good, warn = _nums()
+            self.good_to_lbl.configure(text="100%")
+            self.warn_to_lbl.configure(text=f"{good - 1}%")
+            self.red_to_lbl.configure(text=(f"{warn - 1}%" if warn > 0 else "—"))
+
+        def _range_row(name, fg_color, var, lo, hi, end_attr):
+            row = tk.Frame(wrap, bg=BG)
+            row.pack(fill="x", pady=(8, 0))
+            tk.Label(row, text=name, font=self._f(10), bg=BG, fg=fg_color,
+                     anchor="w").pack(side="left")
+            lbl = tk.Label(row, text="", font=self._f(10), bg=BG, fg=TXT)
+            lbl.pack(side="right")
+            tk.Label(row, text="到", font=self._f(10), bg=BG, fg=SUB).pack(side="right", padx=4)
+            tk.Spinbox(row, from_=lo, to=hi, increment=1, width=4, textvariable=var,
+                       command=_sync_ranges, font=self._f(10), bg=CARD_HI, fg=TXT, bd=0,
+                       justify="center", buttonbackground=CARD_HI).pack(side="right", ipady=3)
+            tk.Label(row, text="起", font=self._f(10), bg=BG, fg=SUB).pack(side="right")
+            setattr(self, end_attr, lbl)
+
+        _range_row("绿色", "#4ade80", self.good_var, 1, 100, "good_to_lbl")
+        _range_row("黄色", "#fabe46", self.warn_var, 0, 99, "warn_to_lbl")
+
+        # 红色没有「起」可改：它接在黄色下面，从 0 到 黄起-1
+        red_row = tk.Frame(wrap, bg=BG)
+        red_row.pack(fill="x", pady=(8, 0))
+        tk.Label(red_row, text="红色", font=self._f(10), bg=BG, fg="#f87171",
+                 anchor="w").pack(side="left")
+        self.red_to_lbl = tk.Label(red_row, text="", font=self._f(10), bg=BG, fg=TXT)
+        self.red_to_lbl.pack(side="right")
+        tk.Label(red_row, text="到", font=self._f(10), bg=BG, fg=SUB).pack(side="right", padx=4)
+        tk.Label(red_row, text="从 0", font=self._f(10), bg=BG, fg=SUB).pack(side="right")
+
+        self.good_var.trace_add("write", _sync_ranges)
+        self.warn_var.trace_add("write", _sync_ranges)
+        _sync_ranges()
+
         btn_row = tk.Frame(wrap, bg=BG)
         btn_row.pack(fill="x", pady=(18, 0))
         tk.Button(btn_row, text="保存", font=self._f(10), bg=ACC, fg="white", bd=0,
@@ -543,12 +602,24 @@ class Settings:
         spec = self._pending_spec
         if spec is None:
             spec = "" if self.hk_var.get() == "未设置" else self.app.config.get("hotkey", "")
+        try:
+            warn = max(0, min(99, int(self.warn_var.get() or 20)))
+        except ValueError:
+            warn = 20
+        try:
+            good = max(1, min(100, int(self.good_var.get() or 80)))
+        except ValueError:
+            good = 80
+        if good <= warn:
+            good = min(100, warn + 1)
         ok = self.app.apply_settings({
             "hotkey": spec or "",
             "hotkey_enabled": bool(self.hk_on.get()),
             "autostart": bool(self.auto_var.get()),
             "refresh_seconds": max(15, int(self.refresh_var.get() or 60)),
             "hover_delay": min(3.0, max(0.0, float(self.hover_var.get() or 0.35))),
+            "warn_level": warn,
+            "good_level": good,
         })
         if ok is False and self.win and self.win.winfo_exists():
             messagebox.showwarning(
@@ -628,7 +699,9 @@ class Tooltip:
 
     def show(self):
         self._ensure()
-        img = render.render_tooltip(self.app.battery_snapshot(), self.TW, self.TH, scale=self.ds)
+        img = render.render_tooltip(self.app.battery_snapshot(), self.TW, self.TH, scale=self.ds,
+                                    good=self.app.config.get("good_level", 80),
+                                    warn=self.app.config.get("warn_level", 20))
         self.photo = ImageTk.PhotoImage(img)
         self.lbl.configure(image=self.photo)
         w, h = int(self.TW * self.ds), int(self.TH * self.ds)
